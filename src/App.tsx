@@ -5,6 +5,9 @@ import { processMboxFile, generateCSV, type ParsedEmail } from '@/lib/mbox-parse
 import { Upload, FileText, CheckCircle } from 'lucide-react'
 import './App.css'
 
+import ghLogo from './assets/gh-logo.svg'
+import ghLogoWhite from './assets/gh-logo-white.svg'
+
 type AppState = 'idle' | 'processing' | 'done' | 'error'
 
 function formatBytes(bytes: number): string {
@@ -89,7 +92,15 @@ function App() {
     <main className="bg-zinc-100 dark:bg-zinc-950 min-h-screen flex items-center justify-center p-4">
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader>
-          <CardTitle className="text-2xl font-bold">mbox2csv</CardTitle>
+          <CardTitle className="text-2xl font-bold flex flex-row items-between">
+            <span className='flex-1'>mbox2csv</span>
+            <span className='flex-1 text-right'>
+              <a href="https://github.com/magnusfoldager/mbox2csv/" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
+              <img src={ghLogoWhite} alt="GitHub" className="hidden dark:inline-block  h-5 w-5" />
+              <img src={ghLogo} alt="GitHub" className="inline-block dark:hidden  h-5 w-5" />
+              </a>
+            </span>
+          </CardTitle>
           <CardDescription>
             {appState === 'idle' && 'Convert an .mbox file to CSV, entirely in your browser. No email data leaves your browser at any point.'}
             {appState === 'processing' && 'Converting your mailbox…'}
