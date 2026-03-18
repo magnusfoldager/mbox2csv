@@ -21,10 +21,6 @@ export interface ProcessingCallbacks {
   onError: (error: Error) => void
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
 function extractEmail(header: string): string {
   const angleMatch = header.match(/<([^>]+)>/)
   if (angleMatch) return angleMatch[1].trim()
@@ -33,7 +29,6 @@ function extractEmail(header: string): string {
   return header.trim()
 }
 
-/** Decode RFC 2047 encoded words: =?charset?B/Q?text?= */
 function decodeEncodedWords(header: string): string {
   if (!header) return ''
   return header.replace(
@@ -44,7 +39,6 @@ function decodeEncodedWords(header: string): string {
           const bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
           return new TextDecoder(charset).decode(bytes)
         } else {
-          // Quoted-Printable word
           const qp = text
             .replace(/_/g, ' ')
             .replace(/=([0-9A-Fa-f]{2})/g, (_: string, hex: string) =>
@@ -65,7 +59,6 @@ function getCharset(contentType: string): string {
 }
 
 function decodeQuotedPrintable(text: string, charset = 'utf-8'): string {
-  // Remove soft line breaks, then collect bytes
   const noSoftBreaks = text.replace(/=\r?\n/g, '')
   const bytes: number[] = []
   let i = 0
@@ -121,24 +114,31 @@ function stripHtml(html: string): string {
     .trim()
 }
 
-/** Parse a block of header text into a key→value map (handles folding). */
 function parseHeaders(text: string): Record<string, string> {
   const headers: Record<string, string> = {}
+  // These headers may appear multiple times; concatenate instead of dropping duplicates.
+  const CONCAT_KEYS = new Set(['cc', 'bcc'])
+  let currentKey = ''
   const lines = text.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].replace(/\r$/, '')
-    if ((line.startsWith(' ') || line.startsWith('\t')) && i > 0) {
-      const keys = Object.keys(headers)
-      if (keys.length > 0) {
-        headers[keys[keys.length - 1]] += ' ' + line.trim()
-      }
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\r$/, '')
+    // Folded continuation line
+    if ((line.startsWith(' ') || line.startsWith('\t')) && currentKey) {
+      headers[currentKey] = (headers[currentKey] ?? '') + ' ' + line.trim()
       continue
     }
     const colonIdx = line.indexOf(':')
     if (colonIdx > 0) {
       const key = line.substring(0, colonIdx).toLowerCase().trim()
       const value = line.substring(colonIdx + 1).trim()
-      if (!(key in headers)) headers[key] = value
+      currentKey = key
+      if (key in headers) {
+        if (CONCAT_KEYS.has(key) && value) headers[key] += ', ' + value
+      } else {
+        headers[key] = value
+      }
+    } else {
+      currentKey = ''
     }
   }
   return headers
@@ -151,7 +151,6 @@ function decodeBodyContent(text: string, encoding: string, charset: string): str
   return text
 }
 
-/** Parse a Date header into { date: 'DD-MM-YYYY', time: 'HH:MM' }. */
 function parseDateHeader(dateStr: string): { date: string; time: string } {
   if (!dateStr) return { date: '', time: '' }
   try {
@@ -168,7 +167,6 @@ function parseDateHeader(dateStr: string): { date: string; time: string } {
   }
 }
 
-/** Extract plain text and raw HTML from a MIME multipart body. */
 function extractFromMultipart(body: string, boundary: string): BodyParts {
   const delimiter = '--' + boundary
   const closing = delimiter + '--'
@@ -220,18 +218,12 @@ function extractFromMultipart(body: string, boundary: string): BodyParts {
   return { plain: plainText, html: htmlRaw }
 }
 
-// ---------------------------------------------------------------------------
-// Core parser
-// ---------------------------------------------------------------------------
-
 function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
   const lines = raw.split('\n')
   let i = 0
 
-  // Skip the MBOX envelope "From " line
   if (lines[0]?.replace(/\r$/, '').startsWith('From ')) i = 1
 
-  // Collect header lines (until blank line)
   const headerLines: string[] = []
   for (; i < lines.length; i++) {
     const line = lines[i].replace(/\r$/, '')
@@ -247,8 +239,10 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
 
   const from = headers['from'] || ''
   const to = headers['to'] || headers['x-original-to'] || ''
-  const cc = decodeEncodedWords(headers['cc'] || '')
-  const bcc = decodeEncodedWords(headers['bcc'] || '')
+  const cc = decodeEncodedWords(headers['cc'] || headers['x-cc'] || '')
+  const bcc = decodeEncodedWords(
+    headers['bcc'] || headers['x-bcc'] || headers['x-mozilla-bcc'] || headers['x-original-bcc'] || '',
+  )
   const subject = decodeEncodedWords(headers['subject'] || '(No Subject)')
   const contentType = headers['content-type'] || 'text/plain'
   const contentTransferEncoding = headers['content-transfer-encoding'] || '7bit'
@@ -259,7 +253,6 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
 
   const fromEmail = extractEmail(from)
 
-  // Determine direction: compare From to user email, or use folder hints
   let isOutgoing = false
   if (userEmail && fromEmail.toLowerCase() === userEmail.toLowerCase()) {
     isOutgoing = true
@@ -272,7 +265,6 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
   const direction: 'Incoming' | 'Outgoing' = isOutgoing ? 'Outgoing' : 'Incoming'
   const emailField = isOutgoing ? extractEmail(to) : fromEmail
 
-  // Parse body
   let body = ''
   let bodyHtml = ''
   if (contentType.includes('multipart/')) {
@@ -291,9 +283,7 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
     body = decodeBodyContent(bodyText, contentTransferEncoding, charset).trim()
   }
 
-  // Unescape ">From " lines that were quoted to protect MBOX format
   body = body.replace(/^>From /gm, 'From ')
-  // Collapse whitespace for CSV readability
   body = body.replace(/\r/g, '').replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim()
   bodyHtml = bodyHtml.replace(/\r\n/g, '\n').trim()
 
@@ -301,10 +291,6 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
 
   return { email: emailField, subject, body, bodyHtml, cc, bcc, date, time, direction }
 }
-
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
 
 function escapeCSV(value: string): string {
   return `"${value.replace(/"/g, '""')}"`
@@ -327,7 +313,7 @@ export async function processMboxFile(
   userEmail: string,
   callbacks: ProcessingCallbacks,
 ): Promise<void> {
-  const CHUNK_SIZE = 512 * 1024 // 512 KB – keeps UI responsive
+  const CHUNK_SIZE = 512 * 1024
 
   let lineBuffer = ''
   let messageLines: string[] = []
@@ -354,7 +340,6 @@ export async function processMboxFile(
 
       const text = lineBuffer + chunk
 
-      // Keep incomplete last line in buffer unless this is the final chunk
       let processText: string
       if (offset < file.size) {
         const lastNL = text.lastIndexOf('\n')
@@ -362,7 +347,6 @@ export async function processMboxFile(
           processText = text.substring(0, lastNL + 1)
           lineBuffer = text.substring(lastNL + 1)
         } else {
-          // No newline in accumulated text yet — keep buffering
           lineBuffer = text
           callbacks.onProgress(offset, file.size, emailsProcessed)
           await new Promise((r) => setTimeout(r, 0))
@@ -386,11 +370,9 @@ export async function processMboxFile(
       }
 
       callbacks.onProgress(offset, file.size, emailsProcessed)
-      // Yield to browser so the progress bar can repaint
       await new Promise((r) => setTimeout(r, 0))
     }
 
-    // Handle any remaining buffered content
     if (lineBuffer) messageLines.push(lineBuffer.replace(/\r$/, ''))
     flushMessage()
 

@@ -94,7 +94,7 @@ function App() {
             {appState === 'idle' && 'Convert an .mbox file to CSV, entirely in your browser. No email data leaves your browser at any point.'}
             {appState === 'processing' && 'Converting your mailbox…'}
             {appState === 'done' &&
-              `Done — ${results.length.toLocaleString()} emails converted.`}
+              `Done. ${results.length.toLocaleString()} emails converted.`}
             {appState === 'error' && 'Something went wrong.'}
           </CardDescription>
         </CardHeader>
@@ -199,7 +199,7 @@ function App() {
               </div>
 
               <p className="text-center text-xs text-muted-foreground">
-                Processing entirely in your browser — no data is uploaded.
+                Processing entirely in your browser.
               </p>
             </div>
           )}
