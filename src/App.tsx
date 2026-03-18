@@ -95,14 +95,14 @@ function App() {
           <CardTitle className="text-2xl font-bold flex flex-row items-between">
             <span className='flex-1'>mbox2csv</span>
             <span className='flex-1 text-right'>
-              <a href="https://github.com/magnusfoldager/mbox2csv/" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
-              <img src={ghLogoWhite} alt="GitHub" className="hidden dark:inline-block  h-5 w-5" />
+              <a href="https://github.com/magnusfoldager/mbox2csv/" target="_blank" rel="noopener noreferrer" className="opacity-50 hover:opacity-100 transition-opacity">
+              <img src={ghLogoWhite} alt="GitHub" className="hidden dark:inline-block h-5 w-5" />
               <img src={ghLogo} alt="GitHub" className="inline-block dark:hidden  h-5 w-5" />
               </a>
             </span>
           </CardTitle>
-          <CardDescription>
-            {appState === 'idle' && 'Convert an .mbox file to CSV, entirely in your browser. No email data leaves your browser at any point.'}
+          <CardDescription className='max-w-[70%]'>
+            {appState === 'idle' && 'Convert an .mbox file to CSV, without any data ever leaving your browser.'}
             {appState === 'processing' && 'Converting your mailbox…'}
             {appState === 'done' &&
               `Done. ${results.length.toLocaleString()} emails converted.`}
