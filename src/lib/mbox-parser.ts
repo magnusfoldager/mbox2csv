@@ -19,12 +19,13 @@ export interface ProcessingCallbacks {
   onProgress: (bytesProcessed: number, totalBytes: number, emailsProcessed: number) => void
   onDone: (emails: ParsedEmail[]) => void
   onError: (error: Error) => void
+  onCancel?: () => void
 }
 
 function extractEmail(header: string): string {
   const angleMatch = header.match(/<([^>]+)>/)
   if (angleMatch) return angleMatch[1].trim()
-  const emailMatch = header.match(/[\w.+\-]+@[\w.\-]+\.\w+/)
+  const emailMatch = header.match(/[^\s@<>"',;]+@[^\s@<>"',;]+/)
   if (emailMatch) return emailMatch[0]
   return header.trim()
 }
@@ -39,12 +40,23 @@ function decodeEncodedWords(header: string): string {
           const bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0))
           return new TextDecoder(charset).decode(bytes)
         } else {
-          const qp = text
-            .replace(/_/g, ' ')
-            .replace(/=([0-9A-Fa-f]{2})/g, (_: string, hex: string) =>
-              String.fromCharCode(parseInt(hex, 16)),
-            )
-          return qp
+          const replaced = text.replace(/_/g, ' ')
+          const bytes: number[] = []
+          let j = 0
+          while (j < replaced.length) {
+            if (replaced[j] === '=' && j + 2 < replaced.length && /^[0-9A-Fa-f]{2}$/.test(replaced.substring(j + 1, j + 3))) {
+              bytes.push(parseInt(replaced.substring(j + 1, j + 3), 16))
+              j += 3
+            } else {
+              bytes.push(replaced.charCodeAt(j))
+              j++
+            }
+          }
+          try {
+            return new TextDecoder(charset).decode(new Uint8Array(bytes))
+          } catch {
+            return new TextDecoder('utf-8').decode(new Uint8Array(bytes))
+          }
         }
       } catch {
         return text
@@ -156,11 +168,11 @@ function parseDateHeader(dateStr: string): { date: string; time: string } {
   try {
     const d = new Date(dateStr)
     if (isNaN(d.getTime())) return { date: '', time: '' }
-    const day = String(d.getDate()).padStart(2, '0')
-    const month = String(d.getMonth() + 1).padStart(2, '0')
-    const year = d.getFullYear()
-    const hours = String(d.getHours()).padStart(2, '0')
-    const minutes = String(d.getMinutes()).padStart(2, '0')
+    const day = String(d.getUTCDate()).padStart(2, '0')
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const year = d.getUTCFullYear()
+    const hours = String(d.getUTCHours()).padStart(2, '0')
+    const minutes = String(d.getUTCMinutes()).padStart(2, '0')
     return { date: `${day}-${month}-${year}`, time: `${hours}:${minutes}` }
   } catch {
     return { date: '', time: '' }
@@ -208,10 +220,12 @@ function extractFromMultipart(body: string, boundary: string): BodyParts {
         if (nested.plain) plainText = plainText || nested.plain
         if (nested.html) htmlRaw = htmlRaw || nested.html
       }
-    } else if (ct.includes('text/plain') && !plainText) {
-      plainText = decodeBodyContent(bodyText, enc, cs).trim()
-    } else if (ct.includes('text/html') && !htmlRaw) {
-      htmlRaw = decodeBodyContent(bodyText, enc, cs).trim()
+    } else if (ct.includes('text/plain')) {
+      const decoded = decodeBodyContent(bodyText, enc, cs).trim()
+      plainText = plainText ? plainText + '\n\n' + decoded : decoded
+    } else if (ct.includes('text/html')) {
+      const decoded = decodeBodyContent(bodyText, enc, cs).trim()
+      htmlRaw = htmlRaw ? htmlRaw + '\n' + decoded : decoded
     }
   }
 
@@ -238,7 +252,7 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
   const bodyText = lines.slice(i).join('\n')
 
   const from = headers['from'] || ''
-  const to = headers['to'] || headers['x-original-to'] || ''
+  const to = headers['to'] || headers['x-original-to'] || headers['delivered-to'] || ''
   const cc = decodeEncodedWords(headers['cc'] || headers['x-cc'] || '')
   const bcc = decodeEncodedWords(
     headers['bcc'] || headers['x-bcc'] || headers['x-mozilla-bcc'] || headers['x-original-bcc'] || '',
@@ -284,8 +298,8 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
   }
 
   body = body.replace(/^>From /gm, 'From ')
-  body = body.replace(/\r/g, '').replace(/\n+/g, ' ').replace(/\s{2,}/g, ' ').trim()
-  bodyHtml = bodyHtml.replace(/\r\n/g, '\n').trim()
+  body = body.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+  bodyHtml = bodyHtml.replace(/^>From /gm, 'From ').replace(/\r\n/g, '\n').trim()
 
   if (!from && !to) return null
 
@@ -305,13 +319,14 @@ export function generateCSV(emails: ParsedEmail[]): string {
         .join(','),
     )
   }
-  return rows.join('\n')
+  return '\ufeff' + rows.join('\r\n')
 }
 
 export async function processMboxFile(
   file: File,
   userEmail: string,
   callbacks: ProcessingCallbacks,
+  signal?: AbortSignal,
 ): Promise<void> {
   const CHUNK_SIZE = 512 * 1024
 
@@ -335,6 +350,10 @@ export async function processMboxFile(
   try {
     while (offset < file.size) {
       const end = Math.min(offset + CHUNK_SIZE, file.size)
+      if (signal?.aborted) {
+        callbacks.onCancel?.()
+        return
+      }
       const chunk = await file.slice(offset, end).text()
       offset = end
 
@@ -359,7 +378,7 @@ export async function processMboxFile(
 
       for (const rawLine of processText.split('\n')) {
         const line = rawLine.replace(/\r$/, '')
-        if (line.startsWith('From ')) {
+        if (/^From (\S+@\S+|MAILER-DAEMON|-) /.test(line)) {
           if (seenFirstEnvelope) {
             flushMessage()
           } else {

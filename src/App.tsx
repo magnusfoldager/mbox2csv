@@ -16,6 +16,10 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
 function App() {
   const [appState, setAppState] = useState<AppState>('idle')
   const [dragOver, setDragOver] = useState(false)
@@ -27,6 +31,7 @@ function App() {
   const [results, setResults] = useState<ParsedEmail[]>([])
   const [error, setError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -49,6 +54,9 @@ function App() {
     setResults([])
     setError('')
 
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     await processMboxFile(file, userEmail.trim(), {
       onProgress: (bytes, total, emails) => {
         setProgress(Math.round((bytes / total) * 100))
@@ -63,12 +71,19 @@ function App() {
         setError(err.message)
         setAppState('error')
       },
-    })
+      onCancel: () => {
+        setAppState('idle')
+      },
+    }, controller.signal)
+  }
+
+  const handleCancel = () => {
+    abortControllerRef.current?.abort()
   }
 
   const handleDownload = () => {
     const csv = generateCSV(results)
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -170,7 +185,7 @@ function App() {
               />
 
               {file && (
-                <Button onClick={handleProcess} className="w-full" disabled={!userEmail.trim()}>
+                <Button onClick={handleProcess} className="w-full" disabled={!isValidEmail(userEmail.trim())}>
                   Convert to CSV
                 </Button>
               )}
@@ -212,6 +227,9 @@ function App() {
               <p className="text-center text-xs text-muted-foreground">
                 Processing entirely in your browser.
               </p>
+              <Button variant="outline" onClick={handleCancel} className="w-full">
+                Cancel
+              </Button>
             </div>
           )}
 
