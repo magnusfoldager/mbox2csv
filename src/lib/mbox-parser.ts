@@ -1,4 +1,5 @@
 export interface ParsedEmail {
+  userEmail: string
   email: string
   subject: string
   body: string
@@ -303,7 +304,7 @@ function parseEmailMessage(raw: string, userEmail: string): ParsedEmail | null {
 
   if (!from && !to) return null
 
-  return { email: emailField, subject, body, bodyHtml, cc, bcc, date, time, direction }
+  return { userEmail, email: emailField, subject, body, bodyHtml, cc, bcc, date, time, direction }
 }
 
 function escapeCSV(value: string): string {
@@ -311,10 +312,10 @@ function escapeCSV(value: string): string {
 }
 
 export function generateCSV(emails: ParsedEmail[]): string {
-  const rows = ['email,subject,body,body_html,cc,bcc,date,time,direction']
+  const rows = ['user_email,email,subject,body,body_html,cc,bcc,date,time,direction']
   for (const e of emails) {
     rows.push(
-      [e.email, e.subject, e.body, e.bodyHtml, e.cc, e.bcc, e.date, e.time, e.direction]
+      [e.userEmail, e.email, e.subject, e.body, e.bodyHtml, e.cc, e.bcc, e.date, e.time, e.direction]
         .map(escapeCSV)
         .join(','),
     )
